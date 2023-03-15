@@ -1,0 +1,8 @@
+keras
+pandas
+numpy
+matplotlib
+pydantic
+intel-tensorflow
+pygame
+gymnasium
