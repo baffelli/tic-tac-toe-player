@@ -4,13 +4,16 @@ import numpy as np
 import keras
 from keras import layers
 import tensorflow as tf
-import app
 from player import make_move, random_move
 import matplotlib.pyplot as plt
 from keras import mixed_precision
 import board
+from player import ModelPlayer, RandomPlayer, AbstractPlayer
+from typing import Callable, Optional
 
 from keras import utils
+
+from gymnasium import Env
 
 seed = 42
 gamma = 0.95  # Discount factor for past rewards
@@ -60,7 +63,7 @@ eps = np.finfo(np.float32).eps.item()
 winning_history = []
 
 
-def next_action(shape, action_probs):
+def next_action(shape: tuple, action_probs: np.array) -> np.array:
     return np.random.choice(shape, p=np.squeeze(action_probs))
 
 
@@ -84,6 +87,17 @@ def discounted_rewards(rewards_history: np.array, gamma: float) -> list[float]:
     returns = (returns - np.mean(returns)) / (np.std(returns) + eps)
     returns = returns.tolist()
     return returns
+
+
+def play_game(g: board.TicTacToeEnv, player: AbstractPlayer, opponent: AbstractPlayer) -> Optional[board.Player]:
+    state, rest = g.reset()
+    cnt  =  0
+    while g.board.get_state() != board.BoardState.ONGOING:
+        action = player.move(g) if (cnt % 2) == 0 else opponent.move(g)
+        state, rewards, done, rest  = g.step(action)
+        cnt  = cnt + 1
+    return g.board.get_winner()
+        
 
 
 # tk_app = app.App(game)
