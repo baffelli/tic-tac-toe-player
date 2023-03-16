@@ -4,7 +4,6 @@ import numpy as np
 import keras
 from keras import layers
 import tensorflow as tf
-import tkinter
 import app
 from player import make_move, random_move
 import matplotlib.pyplot as plt
