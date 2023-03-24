@@ -5,28 +5,29 @@ import numpy as np
 import math
 from typing import Optional, Callable, Tuple
 from abc import ABC, abstractmethod
+import tensorflow as tf
 
 from keras import Model
 
-def next_action(shape: tuple, action_probs: np.array) -> np.array:
-    return np.random.choice(shape, p=np.squeeze(action_probs))
+def next_action(action_probs: np.array) -> np.array:
+    return np.random.choice(range(action_probs.numpy().size), p=np.squeeze(action_probs))
 
 
-def minimax(maxTurn: bool, player: board.Player, current_board: board.Board):
+def minimax(maxTurn: bool, player: board.Player, current_board: board.Board, depth: int = 0, depth_limit: int = None):
     state = current_board.get_state()
     if (state == board.BoardState.DRAW):
         return 0
     elif (state == board.BoardState.DONE):
         return 1 if current_board.get_winner() == player else -1
-
-    scores = []
-    for move in current_board.possible_moves(player):
-        next_board = current_board.copy()
-        next_board.move(player, move)
-        scores.append(minimax(not maxTurn, player.switch(), next_board))
-        if (maxTurn and max(scores) == 1) or (not maxTurn and min(scores) == -1):
-            break
-    return max(scores) if maxTurn else min(scores)
+    else:
+        scores = []
+        for move in current_board.possible_moves(player):
+            next_board = current_board.copy()
+            next_board.move(player, move)
+            scores.append(minimax(not maxTurn, player.switch(), next_board))
+            if (maxTurn and max(scores) == 1) or (not maxTurn and min(scores) == -1):
+                break
+        return max(scores) if maxTurn else min(scores)
 
 
 def make_move(current_board: board.Board, pl: board.Player):
@@ -82,6 +83,6 @@ class ModelPlayer(AbstractPlayer):
 
     def move(self, env: TicTacToeEnv) -> int:
         state = env._observation()
-        probs, critic = self.model([state])
-        return next_action(probs.shape[0], probs)
+        probs, critic = self.model(tf.expand_dims(state, 0))
+        return next_action(probs)
         

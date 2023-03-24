@@ -4,7 +4,7 @@ import numpy as np
 import keras
 from keras import layers
 import tensorflow as tf
-from player import make_move, random_move
+from player import make_move, random_move, next_action
 import matplotlib.pyplot as plt
 from keras import mixed_precision
 import board
@@ -18,39 +18,35 @@ from gymnasium import Env
 seed = 42
 gamma = 0.95  # Discount factor for past rewards
 max_steps_per_episode = 1000
+number_episodes = 1000
 n_pos = 9
 num_symbols = 2
 
-input_shape = (n_pos * num_symbols, )
+input_shape = (n_pos, )
 output_shape = n_pos
 
 
-class Player:
-    def __init__(self, color: board.Player):
-        self.color = color
 
-    def make_model(self) -> keras.Model:
-        input = keras.Input(input_shape)
-        dense = layers.Dense(18, activation='relu',
-                             kernel_initializer='random_normal')(input)
-        dense1 = layers.Dense(100, activation="relu")(dense)
-        actor = layers.Dense(9, activation='softmax',
-                             kernel_initializer='random_normal')(dense1)
-        
-    
-        critic = layers.Dense(1, kernel_initializer='random_normal')(dense1)
-        model = keras.Model(inputs=input, outputs=[
-                            actor, critic])
-        return model
+def make_model() -> keras.Model:
+    input = keras.Input(input_shape)
+    dense = layers.Dense(input_shape[0] * 2, activation='relu',
+                            kernel_initializer='random_normal')(input)
+    dense1 = layers.Dense(18, activation="relu")(input)
+    actor = layers.Dense(9, activation='softmax',
+                            kernel_initializer='random_normal')(dense)
 
+    critic = layers.Dense(1, kernel_initializer='random_normal')(dense1)
+    model = keras.Model(inputs=input, outputs=[
+                        actor, critic])
+    return model
 
-player = Player(board.Player.WHITE)
-model = player.make_model()
+# Setup model
+model = make_model()
 utils.plot_model(model, show_shapes=True)
 print(model.summary())
 
 
-optimizer = keras.optimizers.Adam(learning_rate=0.001)
+optimizer = keras.optimizers.Adam(learning_rate=0.01)
 huber_loss = keras.losses.Huber()
 action_probs_history = []
 critic_value_history = []
@@ -63,15 +59,13 @@ eps = np.finfo(np.float32).eps.item()
 winning_history = []
 
 
-def next_action(shape: tuple, action_probs: np.array) -> np.array:
-    return np.random.choice(shape, p=np.squeeze(action_probs))
 
 
-def calculate_running_reward(running, current, alpha=0.05):
-    return alpha * current + (1 - alpha) * running
+def calculate_running_reward(running, episode, alpha=0.05):
+    return alpha * episode + (1 - alpha) * running
 
 
-def discounted_rewards(rewards_history: np.array, gamma: float) -> list[float]:
+def discounted_rewards(rewards_history: np.ndarray, gamma: float) -> list[float]:
     # Calculate expected value from rewards
     # - At each timestep what was the total reward received after that timestep
     # - Rewards in the past are discounted by multiplying them with gamma
@@ -89,63 +83,59 @@ def discounted_rewards(rewards_history: np.array, gamma: float) -> list[float]:
     return returns
 
 
-def play_game(g: board.TicTacToeEnv, player: AbstractPlayer, opponent: AbstractPlayer) -> Optional[board.Player]:
+def play_game(g: board.TicTacToeEnv, player: AbstractPlayer, opponent: AbstractPlayer) -> int:
     state, rest = g.reset()
-    cnt  =  0
-    while g.board.get_state() != board.BoardState.ONGOING:
+    if player.color == opponent.color:
+        raise ValueError("Opponent and player should have different colors")
+    cnt = 0
+    while g.board.get_state() == board.BoardState.ONGOING:
         action = player.move(g) if (cnt % 2) == 0 else opponent.move(g)
-        state, rewards, done, rest  = g.step(action)
-        cnt  = cnt + 1
-    return g.board.get_winner()
-        
+        state, rewards, done, rest = g.step(action)
+        cnt = cnt + 1
+    w = g.board.get_winner()
+    if w is None:
+        return 0
+    else:   
+        return 1 if w == player.color else -1
 
 
-# tk_app = app.App(game)
 
 
-player_color = board.Player.WHITE
-game = board.TicTacToeEnv(player=player_color, render_mode="human")
+#Setup game
+starting_color = board.Player.WHITE
+game = board.TicTacToeEnv(render_mode="human")
+winning_stats = np.zeros(int(number_episodes / 10))
+running_reward_history = []
 
-while True:  # Run until solved
+
+
+
+
+for i in range(number_episodes):  # Run until solved
     state, a = game.reset()
-
-    print("New board")
     episode_reward = 0
+    #keras.backend.clear_session()
     with tf.GradientTape() as tape:
         for timestep in range(1, max_steps_per_episode):
             # of the agent in a pop up window.
             state = game._observation()
             state = tf.convert_to_tensor(state)
             state = tf.expand_dims(state, 0)
-            # print(state.shape)
-
-            
-            # Apply the sampled action in our environment
-            # if game.board.get_state() == board.BoardState.ONGOING and game.turn != player_color:
-            #     action = random_move(game.board, game.turn)
-            # else:
-                # Predict action probabilities and estimated future rewards
-                # from environment state
+            # Predict action probabilities and estimated future rewards
+            # from environment state
             action_probs, critic_value = model(state)
             critic_value_history.append(critic_value[0, 0])
             # Sample action from action probability distribution
-            action = next_action(n_pos, action_probs)
+            action = next_action(action_probs)
             action_probs_history.append(tf.math.log(action_probs[0, action]))
             state, reward, done, rest = game.step(action)
-            #state = tf.expand_dims(state, 0)
+            print(action, done)
             rewards_history.append(reward)
             episode_reward += reward
-            if game.board.get_state() != board.BoardState.ONGOING:
-                winner = game.board.get_winner()
-                winning_history.append(winner)
-                winning_ratio = winning_history.count(
-                    player_color)/len(winning_history)
-                print(game.board.get_state(), reward, winner, winning_ratio, running_reward)
+            if done:
                 break
-
         # Update running reward to check condition for solving
-        running_reward = calculate_running_reward(
-            episode_reward, running_reward)
+        running_reward = calculate_running_reward(running_reward, episode_reward)
 
         # Calculate expected value from rewards
         returns = discounted_rewards(rewards_history, gamma)
@@ -173,18 +163,29 @@ while True:  # Run until solved
         loss_value = sum(actor_losses) + sum(critic_losses)
         grads = tape.gradient(loss_value, model.trainable_variables)
         optimizer.apply_gradients(zip(grads, model.trainable_variables))
-
         # Clear the loss and reward history
         action_probs_history.clear()
         critic_value_history.clear()
-        rewards_history.clear()
+        rewards_history.clear() 
+
+
 
     # Log details
     episode_count += 1
     if episode_count % 10 == 0:
+        #Play test game
+        # game.reset()
+        model_player = ModelPlayer(starting_color, model)
+        random_player = RandomPlayer(starting_color.switch())
+        winner = play_game(game, model_player, random_player)
+        winning_stats[i // 10] = winner
         template = "running reward: {:.2f} at episode {}"
         print(template.format(running_reward, episode_count))
-
+        current_episodes = winning_stats[0:int(i / 10)]
+        winnint_percent = np.sum((current_episodes == 1) + (current_episodes == 0 )) / (current_episodes.shape[0])
+        print(winnint_percent)
+        starting_color = starting_color.switch()
+        running_reward_history.append(running_reward)
     if running_reward > 1e4:  # Condition to consider the task solved
         print("Solved at episode {}!".format(episode_count))
         break
